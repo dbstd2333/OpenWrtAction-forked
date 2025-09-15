@@ -1,0 +1,87 @@
+#
+# Copyright (c) 2022-2024 SMALLPROGRAM <https://github.com/smallprogram/OpenWrtAction>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/smallprogram/OpenWrtAction
+# Description: Build OpenWrt using GitHub Actions
+#
+
+name: Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+      is_display_detailed:
+        description: 'Whether to display detailed information about compilation'
+        required: false
+        default: 'false'
+      is_single_threaded:
+        description: 'Whether single-threaded compilation'
+        required: false
+        default: 'false'
+      is_show_compile_timestamp:
+        description: 'Whether show compile timestamp'
+        required: false
+        default: 'false'
+  # schedule:
+  #   - cron: 0 */8 * * *
+
+env:
+  MAKE_DEFCONFIG_SH: compile_script/step01_make_defconfig.sh
+  GENERATE_RELEASE_TAG_SH: compile_script/step02_generate_release_tag.sh
+  GENERATE_GIT_LOG_SH: compile_script/step03_generate_git_log.sh
+  UPDATE_GIT_LOG_SH:  compile_script/step06_update_git_log.sh
+  ORGANIZE_TAG_SH: compile_script/step07_organize_tag.sh
+  PLATFORMS_SH: compile_script/platforms.sh
+  MATRIX_STATUS_SH: compile_script/matrix_job_status.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_ARTIFACT: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  job_init: 
+    runs-on: ubuntu-latest
+    name: Init
+    steps:
+      - name: Initialization Environment
+        run: |
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown -R $USER:$GROUPS /workdir
+          df -hT
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: test
+        run: |
+          chmod +x diy_script/immortalwrt_diy/diy-part3.sh
+          if [[ ${{ fromJSON(github.run_attempt) }} == 3 ]]; then
+              echo "${{ fromJSON(github.run_attempt) }} == 3 is true"
+              $GITHUB_WORKSPACE/diy_script/immortalwrt_diy/diy-part3.sh "${{ fromJSON(github.run_attempt) }}" "100"
+          else
+              echo "${{ fromJSON(github.run_attempt) }} == 3 is false"
+              $GITHUB_WORKSPACE/diy_script/immortalwrt_diy/diy-part3.sh "${{ fromJSON(github.run_attempt) }}" "100"
+          fi
+      
+  rerun-failed-jobs:
+    runs-on: ubuntu-latest
+    needs: [job_init]
+    if: fromJSON(github.run_attempt) < 3  && !cancelled()
+    steps:
+      - name: Rerun failed jobs in the current workflow
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Retry failed jobs for the ${{ fromJSON(github.run_attempt) }} time, Retry 3 times in total"
+          gh workflow run Retry_All_Jobs.yml -F run_id=${{ github.run_id }}

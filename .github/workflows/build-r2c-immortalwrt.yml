@@ -1,0 +1,109 @@
+name: Build R2C-ImmortalWrt Only
+
+on:
+    workflow_dispatch:
+        inputs:
+            ssh:
+                description: "SSH connection to Actions"
+                required: false
+                default: "false"
+
+env:
+    MAKE_DEFCONFIG_SH: compile_script/step01_make_defconfig.sh
+    GENERATE_RELEASE_TAG_SH: compile_script/step02_generate_release_tag.sh
+    GENERATE_GIT_LOG_SH: compile_script/step03_generate_git_log.sh
+    UPDATE_GIT_LOG_SH: compile_script/step06_update_git_log.sh
+    ORGANIZE_TAG_SH: compile_script/step07_organize_tag.sh
+    PLATFORMS_SH: compile_script/platforms.sh
+    UPLOAD_BIN_DIR: false
+    UPLOAD_FIRMWARE: true
+    UPLOAD_ARTIFACT: true
+    UPLOAD_RELEASE: true
+    TZ: Asia/Shanghai
+
+jobs:
+    build_r2c_immortalwrt:
+        runs-on: ubuntu-latest
+        name: Build R2C-ImmortalWrt
+        steps:
+            - name: Initialization Environment
+              run: |
+                  sudo timedatectl set-timezone "$TZ"
+                  sudo mkdir -p /workdir
+                  sudo chown $USER:$GROUPS /workdir
+                  df -hT
+
+            - name: Maximize Build Space
+              uses: easimon/maximize-build-space@master
+              with:
+                  root-reserve-mb: 6144
+                  swap-size-mb: 10240
+                  remove-dotnet: "true"
+                  remove-android: "true"
+                  remove-haskell: "true"
+                  remove-codeql: "true"
+                  remove-docker-images: "true"
+                  build-mount-path: "/workdir"
+
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install Packages
+              env:
+                  DEBIAN_FRONTEND: noninteractive
+              run: |
+                  sudo -E apt-get -qq update
+                  sudo -E apt-get -qq install $(curl -fsSL https://github.com/smallprogram/OpenWrtAction/raw/main/diy_script/immortalwrt_dependence)
+                  sudo timedatectl set-timezone "$TZ"
+
+            - name: Clone Source Code
+              working-directory: /workdir
+              run: |
+                  git clone -b openwrt-24.10 --single-branch https://github.com/immortalwrt/immortalwrt.git openwrt
+                  ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+            - name: Load Custom Feeds
+              run: |
+                  chmod +x diy_script/immortalwrt_diy/diy-part1.sh
+                  cd openwrt
+                  $GITHUB_WORKSPACE/diy_script/immortalwrt_diy/diy-part1.sh
+
+            - name: Update Feeds
+              run: cd openwrt && ./scripts/feeds update -a
+
+            - name: Install Feeds
+              run: cd openwrt && ./scripts/feeds install -a
+
+            - name: SSH connection to Actions
+              uses: mxschmitt/action-tmate@v3.16
+              if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false')
+
+            - name: Load R2C Configuration
+              run: |
+                  cp -r config/immortalwrt_config/R2C.config openwrt/.config
+                  chmod +x diy_script/immortalwrt_diy/diy-part2.sh
+                  cd openwrt
+                  $GITHUB_WORKSPACE/diy_script/immortalwrt_diy/diy-part2.sh
+                  make defconfig
+
+            - name: Download Package
+              id: package
+              run: |
+                  cd $GITHUB_WORKSPACE/openwrt
+                  make download -j8
+                  find dl -size -1024c -exec ls -l {} \;
+                  find dl -size -1024c -exec rm -f {} \;
+
+            - name: Build Firmware
+              run: |
+                  cd $GITHUB_WORKSPACE/openwrt
+                  make -j$(nproc) V=s
+
+            - name: Upload Artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: r2c-immortalwrt-firmware
+                  path: openwrt/bin/targets/rockchip/armv8/
+                  retention-days: 7
