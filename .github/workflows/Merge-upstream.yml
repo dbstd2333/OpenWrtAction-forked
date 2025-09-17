@@ -5,7 +5,9 @@
 # 
 
 name: Merge-upstream
-
+permissions:
+  contents: write
+  workflows: write
 on:
   workflow_dispatch:
     inputs:
