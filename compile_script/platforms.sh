@@ -13,12 +13,12 @@ lede_value='{"REPO_URL": "https://github.com/coolsnowwolf/lede","REPO_BRANCH": "
 
 openwrt_platforms=(X86 R2S R3S R4S R4SE R5C R5S R6C R6S)
 
-immortalwrt_platforms=(X86 R2S R3S R4S R4SE R5C R5S R6C R6S R66S R68S R2C)
+immortalwrt_platforms=(X86 R2C R66S)
 
 lede_platforms=(X86 R2S R3S R4S R4SE R5C R5S R6C R6S H28K H29K H66K H68K H69K R66S R68S)
 
 
-copy_backgroundfiles_platforms=(X86 R5S R5C R4S R4SE R2S R2C H66K H68K H69K R66S R68S R_PI_3b R_PI_4b)
+copy_backgroundfiles_platforms=(X86 R2C R66S)
 
 matrix_json="["
 source_matrix_json="["

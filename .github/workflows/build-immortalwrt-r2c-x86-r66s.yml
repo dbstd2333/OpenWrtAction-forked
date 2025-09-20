@@ -1,0 +1,181 @@
+#
+# Copyright (c) 2022-2024 SMALLPROGRAM <https://github.com/smallprogram/OpenWrtAction>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/smallprogram/OpenWrtAction
+# Description: Build ImmortalWrt for R2C, X86, R66S only
+#
+
+name: Build-ImmortalWrt-R2C-X86-R66S
+
+on:
+  repository_dispatch:
+    types: [immortalwrt_source_update]
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+      is_display_detailed:
+        description: 'Display detailed compilation information'
+        required: false
+        default: 'false'
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_BRANCH: openwrt-24.10
+  CONFIGS: config/immortalwrt_config
+  DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
+  DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
+  DIY_P3_SH: diy_script/immortalwrt_diy/diy-part3.sh
+  MAKE_DEFCONFIG_SH: compile_script/step01_make_defconfig.sh
+  GENERATE_RELEASE_TAG_SH: compile_script/step02_generate_release_tag.sh
+  GENERATE_GIT_LOG_SH: compile_script/step03_generate_git_log.sh
+  COPY_BACKGROUNDFILES_SH: compile_script/step04_copy_backgroundfiles.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_ARTIFACT: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    name: Build-${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [R2C, X86, R66S]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Initialization Environment
+      run: |
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown -R $USER:$GROUPS /workdir
+        cd /workdir
+        sudo mkdir -p output
+        sudo chown -R $USER:$GROUPS /workdir/output
+        ln -sf /workdir/output $GITHUB_WORKSPACE/output
+        df -hT
+
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 6144
+        swap-size-mb: 10240
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+        build-mount-path: '/workdir'
+
+    - name: Check Out Source Code
+      working-directory: /workdir
+      run: |
+        git clone -b $REPO_BRANCH --single-branch $REPO_URL openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Load Custom Feeds
+      run: |
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update Feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install Feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load Custom Configuration
+      run: |
+        chmod +x $DIY_P2_SH
+        chmod +x $MAKE_DEFCONFIG_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+        $GITHUB_WORKSPACE/$MAKE_DEFCONFIG_SH "immortalwrt" "$CONFIGS"
+
+    - name: Download Package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile The Firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_OUTPUT
+        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_OUTPUT
+
+    - name: Check Space Usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload Bin Directory
+      uses: actions/upload-artifact@v4
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin_${{ matrix.platform }}_${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize Files
+      id: organize
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload Firmware To Artifact
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_ARTIFACT == 'true'
+      with:
+        name: OpenWrt_firmware_${{ matrix.platform }}_${{ env.FILE_DATE }}
+        path: ${{ steps.organize.outputs.FIRMWARE }}
+
+    - name: Generate Release Tag
+      id: tag
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true'
+      run: |
+        chmod +x $GENERATE_RELEASE_TAG_SH
+        echo "release_tag=$(cat $GITHUB_WORKSPACE/openwrt/.config | grep CONFIG_TARGET_BOARD= | cut -d '"' -f 2)" >> $GITHUB_OUTPUT
+        echo "release_date=$(date +"%Y.%m.%d_%H.%M.%S")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "# ImmortalWrt Firmware for ${{ matrix.platform }}" >> release.txt
+        echo "## Release Info" >> release.txt
+        echo "- **Platform**: ${{ matrix.platform }}" >> release.txt
+        echo "- **Date**: $(date +"%Y.%m.%d %H:%M:%S")" >> release.txt
+        echo "- **ImmortalWrt Branch**: $REPO_BRANCH" >> release.txt
+        echo "## Device Info" >> release.txt
+        echo "- **Device**: ${{ steps.compile.outputs.DEVICE_NAME }}" >> release.txt
+        echo "- **Target**: $(cat $GITHUB_WORKSPACE/openwrt/.config | grep CONFIG_TARGET_BOARD= | cut -d '"' -f 2)" >> release.txt
+
+    - name: Upload Firmware To Release
+      uses: softprops/action-gh-release@v2
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: immortalwrt_${{ matrix.platform }}_${{ steps.tag.outputs.release_date }}
+        name: ImmortalWrt_${{ matrix.platform }}_${{ steps.tag.outputs.release_date }}
+        body_path: release.txt
+        files: ${{ steps.organize.outputs.FIRMWARE }}/*
