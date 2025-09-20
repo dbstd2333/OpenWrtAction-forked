@@ -1,0 +1,8 @@
+<details> <summary> <b>openwrt new commit log :rocket: </b> </summary>
+
+SHA|Author|Date|Message
+-|-|-|-
+daca7c049b|Linus Kardell|Tue Sep 9 16:24:55 2025 +0200|openssl: correct PKG_LICENSE_FILES
+36d93ba2bd|Linus Kardell|Tue Sep 9 16:24:26 2025 +0200|libxml2: correct PKG_LICENSE_FILES
+efcdbe1087|Oliver Sedlbauer|Fri Sep 19 12:42:15 2025 +0200|mac80211: backport EHT 1024 MPDU TX aggregation
+</details>
